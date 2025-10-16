@@ -10,7 +10,7 @@ If Raycast consumes more than a defined memory threshold (default: 500 MB), the 
 
 - Automatically restarts Raycast when memory exceeds threshold
 
-- Sends macOS system notifications on restart
+- Sends macOS system notifications on restart (optional if IBM Notifier is installed)
 
 - Writes detailed logs for each check
 
@@ -24,13 +24,14 @@ If Raycast consumes more than a defined memory threshold (default: 500 MB), the 
 | `APP_NAME` | Application name to monitor | `Raycast` |
 | `MEM_THRESHOLD_MB` | Memory threshold (in MB) before restart | `500` |
 | `LOG_FILE` | Path to the log file | `~/raycast_mem_monitor.log` |
+| `StartInterval` | Memory check frequency | `3600` |
 
 
 ## 🧩 Installation
 
 1. **Copy the script**
 ```bash
-nano ~/raycast_mem_monitor.sh
+vi ~/raycast_mem_monitor.sh
 ```
 Paste the script content and save.
 
@@ -39,23 +40,11 @@ Paste the script content and save.
 chmod +x ~/raycast_mem_monitor.sh
 ```
 
-
 3. **Create the LaunchAgent**
 ```bash
-nano ~/Library/LaunchAgents/com.user.raycastmem.plist
+vi ~/Library/LaunchAgents/com.user.raycastmem.plist
 ```
-Add:
-```xml
-<key>ProgramArguments</key>
-<array>
-    <string>/Users/YOUR_USERNAME/raycast_mem_monitor.sh</string>
-</array>
-<key>StartInterval</key>
-<integer>1800</integer>
-```
-
-
-(1800 = 30 minutes)
+Paste the script content and change `[USERNAME]` to your device name.
 
 4. **Load the task**
 ```bash
@@ -73,10 +62,11 @@ Each entry includes a timestamp, current memory usage, and restart actions.
 
 
 ## 🧠 Notes
+- If you want to use system notification, please install [IBM Notifier](https://github.com/IBM/mac-ibm-notifications).
 
-- Modify StartInterval to change the check frequency (e.g., 3600 = 1 hour).
+- Modify `StartInterval` to change the check frequency (e.g., 3600 = 1 hour).
 
-- macOS notifications require Raycast.app to be installed in /Applications.
+- Modify `MEM_THRESHOLD_MB` to meet your management needs.
 
 - To stop the service:
 ```bash

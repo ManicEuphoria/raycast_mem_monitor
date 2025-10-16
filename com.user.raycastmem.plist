@@ -1,21 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" 
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.user.raycastmem</string>
+    <string>com.boozer.raycastmem</string>
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/[YOUR_USER_NAME]/raycast_mem_monitor.sh</string>
+        <string>/Users/[USERNAME]/raycast_mem_monitor.sh</string>
     </array>
 
     <key>StartInterval</key>
-    <integer>1800</integer>
-
-    <key>RunAtLoad</key>
-    <true/>
+    <integer>3600</integer>
 
     <key>StandardOutPath</key>
     <string>/tmp/raycastmem.out</string>
