@@ -4,7 +4,7 @@ A lightweight macOS shell script that automatically monitors and manages Raycast
 If Raycast consumes more than a defined memory threshold (default: 500 MB), the script will automatically restart the app and notify the user.
 
 
-## 🚀 Features
+## Features
 
 - Monitors Raycast’s memory usage periodically
 
@@ -17,7 +17,7 @@ If Raycast consumes more than a defined memory threshold (default: 500 MB), the 
 - Runs automatically via macOS LaunchAgent (no manual execution needed)
 
 
-## ⚙️ Configuration
+## Configuration
 
 | Setting | Description | Default |
 |----------|--------------|----------|
@@ -27,7 +27,7 @@ If Raycast consumes more than a defined memory threshold (default: 500 MB), the 
 | `StartInterval` | Memory check frequency | `3600` |
 
 
-## 🧩 Installation
+## Installation
 
 1. **Copy the script**
 ```bash
@@ -52,7 +52,7 @@ launchctl load ~/Library/LaunchAgents/com.user.raycastmem.plist
 ```
 
 
-## 🪵 Logs
+## Logs
 
 All activity is logged to:
 ```bash
@@ -61,7 +61,7 @@ All activity is logged to:
 Each entry includes a timestamp, current memory usage, and restart actions.
 
 
-## 🧠 Notes
+## Notes
 - If you want to use system notification, please install [IBM Notifier](https://github.com/IBM/mac-ibm-notifications).
 
 - Modify `StartInterval` to change the check frequency (e.g., 3600 = 1 hour).
