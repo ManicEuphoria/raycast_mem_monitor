@@ -61,8 +61,17 @@ All activity is logged to:
 Each entry includes a timestamp, current memory usage, and restart actions.
 
 
-## Notes
+## Notifications
+
 - If you want to use system notification, please install [IBM Notifier](https://github.com/IBM/mac-ibm-notifications).
+
+**English Notification:**
+<img src="assets/notification_EN.png" alt="English Notification" width="400">
+
+**Chinese Notification:**
+<img src="assets/notification_zh.png" alt="Chinese Notification" width="400">
+
+## Notes
 
 - Modify `StartInterval` to change the check frequency (e.g., 3600 = 1 hour).
 
@@ -73,7 +82,7 @@ Each entry includes a timestamp, current memory usage, and restart actions.
 launchctl unload ~/Library/LaunchAgents/com.user.raycastmem.plist
 ```
 
-## 📄 License
+## License
 
 MIT License — free to use and modify.
 Developed with ❤️ for a smoother Raycast experience.
