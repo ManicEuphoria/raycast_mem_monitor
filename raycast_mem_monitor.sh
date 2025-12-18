@@ -37,8 +37,6 @@ else
     IS_CHINESE=false
 fi
 
-IS_CHINESE=false
-
 # Set localized strings
 if [ "$IS_CHINESE" = true ]; then
     readonly TITLE="内存占用提醒"
