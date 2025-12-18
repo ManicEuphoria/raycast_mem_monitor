@@ -63,7 +63,7 @@ Each entry includes a timestamp, current memory usage, and restart actions.
 
 ## Notifications
 
-- If you want to use system notification, please install [IBM Notifier](https://github.com/IBM/mac-ibm-notifications).
+If you want to use system notification, please install [IBM Notifier](https://github.com/IBM/mac-ibm-notifications).
 
 **English Notification:** <br>
 <img src="assets/notification_EN.png" alt="English Notification" width="400">
