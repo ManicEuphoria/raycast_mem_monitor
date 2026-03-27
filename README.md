@@ -1,7 +1,7 @@
 # Raycast Memory Monitor
 
 A lightweight macOS shell script that automatically monitors and manages Raycast’s memory usage.
-If Raycast consumes more than a defined memory threshold (default: 500 MB), the script will automatically restart the app and notify the user.
+If Raycast consumes more than a defined memory threshold (default: 420 MB), the script will automatically restart the app and notify the user.
 
 
 ## Features
@@ -22,33 +22,41 @@ If Raycast consumes more than a defined memory threshold (default: 500 MB), the 
 | Setting | Description | Default |
 |----------|--------------|----------|
 | `APP_NAME` | Application name to monitor | `Raycast` |
-| `MEM_THRESHOLD_MB` | Memory threshold (in MB) before restart | `500` |
+| `MEM_THRESHOLD_MB` | Memory threshold (in MB) before restart | `420` |
 | `LOG_FILE` | Path to the log file | `~/raycast_mem_monitor.log` |
-| `StartInterval` | Memory check frequency | `3600` |
+| `StartInterval` | Memory check frequency | `300` |
 
 
 ## Installation
 
-1. **Copy the script**
 ```bash
-vi ~/raycast_mem_monitor.sh
-```
-Paste the script content and save.
-
-2. **Make it executable**
-```bash
-chmod +x ~/raycast_mem_monitor.sh
+chmod +x ./deploy.sh
+./deploy.sh
 ```
 
-3. **Create the LaunchAgent**
-```bash
-vi ~/Library/LaunchAgents/com.user.raycastmem.plist
-```
-Paste the script content and change `[USERNAME]` to your device name.
+This command will:
 
-4. **Load the task**
+- copy `raycast_mem_monitor.sh` into `~/Library/Application Support/raycast_mem_monitor/`
+- render `com.user.raycastmem.plist` with the real script path
+- install the LaunchAgent into `~/Library/LaunchAgents/`
+- reload the user LaunchAgent immediately
+
+## Updating
+
 ```bash
-launchctl load ~/Library/LaunchAgents/com.user.raycastmem.plist
+./deploy.sh
+```
+
+Any time you change either `raycast_mem_monitor.sh` or `com.user.raycastmem.plist`, run the same command again to sync the latest version into macOS.
+
+## Management
+
+Useful commands:
+
+```bash
+./deploy.sh dry-run
+./deploy.sh status
+./deploy.sh uninstall
 ```
 
 
@@ -73,13 +81,13 @@ If you want to use system notification, please install [IBM Notifier](https://gi
 
 ## Notes
 
-- Modify `StartInterval` to change the check frequency (e.g., 3600 = 1 hour).
+- Modify `StartInterval` in `com.user.raycastmem.plist`, then run `./deploy.sh` again.
 
-- Modify `MEM_THRESHOLD_MB` to meet your management needs.
+- Modify `MEM_THRESHOLD_MB` in `raycast_mem_monitor.sh`, then run `./deploy.sh` again.
 
 - To stop the service:
 ```bash
-launchctl unload ~/Library/LaunchAgents/com.user.raycastmem.plist
+./deploy.sh uninstall
 ```
 
 ## License

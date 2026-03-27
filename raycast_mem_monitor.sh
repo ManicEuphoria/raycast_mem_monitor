@@ -10,7 +10,7 @@ IFS=$'\n\t'
 
 # ===================== CONFIGURATION =====================
 readonly APP_NAME="Raycast"
-readonly MEM_THRESHOLD_MB=500 # Set default threshold max 500MB
+readonly MEM_THRESHOLD_MB=420 # Set default threshold max 500MB
 readonly LOG_FILE="$HOME/raycast_mem_monitor.log"
 
 # IBM Notifier configuration

@@ -8,11 +8,11 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/[USERNAME]/raycast_mem_monitor.sh</string>
+        <string>__SCRIPT_PATH__</string>
     </array>
 
     <key>StartInterval</key>
-    <integer>3600</integer>
+    <integer>300</integer>
 
     <key>StandardOutPath</key>
     <string>/tmp/raycastmem.out</string>
