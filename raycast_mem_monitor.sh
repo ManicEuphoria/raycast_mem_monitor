@@ -1,6 +1,6 @@
 #!/bin/bash
 # =======================================================
-# Raycast Memory Monitor v0.3
+# Raycast Memory Monitor
 # Author: boozer.asia
 # Mailme: cory@boozer.asia
 # =======================================================
@@ -9,22 +9,26 @@ set -euo pipefail
 IFS=$'\n\t'
 
 # ===================== CONFIGURATION =====================
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly APP_NAME="Raycast"
-readonly MEM_THRESHOLD_MB=420 # Set default threshold max 500MB
+readonly DEFAULT_MEM_THRESHOLD_MB=420
+readonly DEFAULT_START_INTERVAL=300
+readonly CONFIG_FILE="${RMM_CONFIG_FILE:-$SCRIPT_DIR/raycast_mem_monitor.conf}"
 readonly LOG_FILE="$HOME/raycast_mem_monitor.log"
 
 # IBM Notifier configuration
-readonly NA_PATH="/Applications/IBM Notifier.app/Contents/MacOS/IBM Notifier"
+readonly NA_APP_NAME="IBM Notifier.app"
+readonly NA_PRIMARY_APP_ROOT="${RMM_NOTIFIER_PRIMARY_APP_ROOT:-/Applications}"
+readonly NA_FALLBACK_APP_ROOT="${RMM_NOTIFIER_FALLBACK_APP_ROOT:-$HOME/Applications}"
 readonly WINDOW_TYPE="banner" # Due to macOS system limit, alert type is not support 
 readonly BAR_TITLE="Raycast Monitor"
 readonly TIMEOUT="3"  # This is a must-set, or banner will not show due to IBM process was killed too early
 
-# Check if IBM Notifier is installed, if not, skip notification step
-if [ -x "$NA_PATH" ]; then
-    NOTIFIER_AVAILABLE=true
-else
-    NOTIFIER_AVAILABLE=false
-fi
+NA_PATH=""
+NOTIFIER_AVAILABLE=false
+
+MEM_THRESHOLD_MB="$DEFAULT_MEM_THRESHOLD_MB"
+START_INTERVAL="$DEFAULT_START_INTERVAL"
 
 # ===================== LANGUAGE DETECTION =====================
 # Detect system language
@@ -58,10 +62,71 @@ fi
 
 # ===================== FUNCTIONS =====================
 
+is_positive_integer() {
+    [[ "${1:-}" =~ ^[1-9][0-9]*$ ]]
+}
+
 # Log process
 log_info() {
     local msg="$1"
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $msg" >> "$LOG_FILE"
+}
+
+read_config_value() {
+    local key="$1"
+    local default_value="$2"
+    local value=""
+
+    if [ -f "$CONFIG_FILE" ]; then
+        value=$(awk -F= -v key="$key" '
+            /^[[:space:]]*#/ { next }
+            $1 ~ "^[[:space:]]*" key "[[:space:]]*$" {
+                value = $2
+                sub(/^[[:space:]]+/, "", value)
+                sub(/[[:space:]]+$/, "", value)
+                gsub(/^"/, "", value)
+                gsub(/"$/, "", value)
+                print value
+            }
+        ' "$CONFIG_FILE" | tail -n 1)
+    fi
+
+    if is_positive_integer "$value"; then
+        printf '%s\n' "$value"
+    else
+        printf '%s\n' "$default_value"
+    fi
+}
+
+load_config() {
+    MEM_THRESHOLD_MB="$(read_config_value "MEM_THRESHOLD_MB" "$DEFAULT_MEM_THRESHOLD_MB")"
+    START_INTERVAL="$(read_config_value "START_INTERVAL" "$DEFAULT_START_INTERVAL")"
+}
+
+find_notifier_path() {
+    local candidate
+    local candidates=(
+        "$NA_PRIMARY_APP_ROOT/$NA_APP_NAME/Contents/MacOS/IBM Notifier"
+        "$NA_FALLBACK_APP_ROOT/$NA_APP_NAME/Contents/MacOS/IBM Notifier"
+    )
+
+    for candidate in "${candidates[@]}"; do
+        if [ -x "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+refresh_notifier_state() {
+    if NA_PATH="$(find_notifier_path)"; then
+        NOTIFIER_AVAILABLE=true
+    else
+        NA_PATH=""
+        NOTIFIER_AVAILABLE=false
+    fi
 }
 
 # Get raycast pid
@@ -73,7 +138,7 @@ get_app_pid() {
 get_memory_mb() {
     local pid="$1"
     local mem_kb
-    mem_kb=$(ps -o rss= -p "$pid")
+    mem_kb=$(ps -o rss= -p "$pid" | tr -d '[:space:]')
     echo $((mem_kb / 1024))
 }
 
@@ -117,27 +182,72 @@ restart_app() {
     open -a "$APP_NAME"
 }
 
+run_check() {
+    local app_pid
+    local mem_mb
+    local subtitle
+
+    load_config
+    refresh_notifier_state
+
+    app_pid=$(get_app_pid)
+
+    if [ -z "$app_pid" ]; then
+        log_info "$APP_NAME $MSG_NOT_RUNNING"
+        return 0
+    fi
+
+    mem_mb=$(get_memory_mb "$app_pid")
+    log_info "$MSG_CURRENT_MEMORY: ${mem_mb}MB (threshold: ${MEM_THRESHOLD_MB}MB)"
+
+    if [ "$mem_mb" -gt "$MEM_THRESHOLD_MB" ]; then
+        log_info "$MSG_EXCEEDED_THRESHOLD (${mem_mb}MB > ${MEM_THRESHOLD_MB}MB), $MSG_RESTARTING $APP_NAME"
+        restart_app "$app_pid"
+
+        if [ "$NOTIFIER_AVAILABLE" = true ]; then
+            subtitle=$(printf "$MSG_NOTIFICATION_TEMPLATE" "$APP_NAME" "$mem_mb")
+            send_notification "$subtitle"
+        fi
+    fi
+}
+
+run_daemon() {
+    while true; do
+        run_check
+        sleep "$START_INTERVAL"
+    done
+}
+
+usage() {
+    cat <<EOF
+Usage: $(basename "$0") [check|daemon|help]
+
+check   Run one memory check immediately.
+daemon  Run continuously and re-read config before every cycle.
+help    Show this message.
+EOF
+}
 
 # ===================== MAIN PROCEDURE =====================
 
-app_pid=$(get_app_pid)
+main() {
+    local action="${1:-check}"
 
-if [ -z "$app_pid" ]; then
-    log_info "$APP_NAME $MSG_NOT_RUNNING"
-    exit 0
-fi
+    case "$action" in
+        check)
+            run_check
+            ;;
+        daemon)
+            run_daemon
+            ;;
+        help|-h|--help)
+            usage
+            ;;
+        *)
+            usage >&2
+            exit 1
+            ;;
+    esac
+}
 
-mem_mb=$(get_memory_mb "$app_pid")
-log_info "$MSG_CURRENT_MEMORY: ${mem_mb}MB"
-
-if [ "$mem_mb" -gt "$MEM_THRESHOLD_MB" ]; then
-    log_info "$MSG_EXCEEDED_THRESHOLD (${mem_mb}MB > ${MEM_THRESHOLD_MB}MB), $MSG_RESTARTING $APP_NAME"
-    restart_app "$app_pid"
-
-    if [ "$NOTIFIER_AVAILABLE" = true ]; then
-        subtitle=$(printf "$MSG_NOTIFICATION_TEMPLATE" "$APP_NAME" "$mem_mb")
-        send_notification "$subtitle"
-    fi
-fi
-
-exit 0
+main "$@"

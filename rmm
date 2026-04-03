@@ -1,0 +1,732 @@
+#!/bin/bash
+# raycast_mem_monitor_cli
+
+set -euo pipefail
+IFS=$'\n\t'
+
+resolve_script_path() {
+    local source="$1"
+
+    while [ -L "$source" ]; do
+        local dir
+        dir="$(cd -P "$(dirname "$source")" && pwd)"
+        source="$(readlink "$source")"
+        if [[ "$source" != /* ]]; then
+            source="$dir/$source"
+        fi
+    done
+
+    printf '%s\n' "$source"
+}
+
+readonly CLI_NAME="rmm"
+readonly INSTALL_DIR="$HOME/Library/Application Support/raycast_mem_monitor"
+readonly SCRIPT_PATH="$(resolve_script_path "${BASH_SOURCE[0]}")"
+readonly SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+
+detect_source_dir() {
+    local brew_libexec="$SCRIPT_DIR/../libexec"
+
+    if [ -f "$SCRIPT_DIR/raycast_mem_monitor.sh" ] && [ -f "$SCRIPT_DIR/com.user.raycastmem.plist" ]; then
+        printf '%s\n' "$SCRIPT_DIR"
+        return
+    fi
+
+    if [ -f "$brew_libexec/raycast_mem_monitor.sh" ] && [ -f "$brew_libexec/com.user.raycastmem.plist" ]; then
+        (cd "$brew_libexec" && pwd)
+        return
+    fi
+
+    if [ -f "$INSTALL_DIR/raycast_mem_monitor.sh" ] && [ -f "$INSTALL_DIR/com.user.raycastmem.plist" ]; then
+        printf '%s\n' "$INSTALL_DIR"
+        return
+    fi
+
+    printf 'Unable to locate raycast_mem_monitor payload files.\n' >&2
+    exit 1
+}
+
+readonly SOURCE_DIR="$(detect_source_dir)"
+readonly SOURCE_SCRIPT="$SOURCE_DIR/raycast_mem_monitor.sh"
+readonly SOURCE_PLIST="$SOURCE_DIR/com.user.raycastmem.plist"
+readonly SOURCE_WRAPPER="$SOURCE_DIR/rmm"
+readonly CONFIG_FILE="$INSTALL_DIR/raycast_mem_monitor.conf"
+readonly TARGET_SCRIPT="$INSTALL_DIR/raycast_mem_monitor.sh"
+readonly TARGET_PLIST_TEMPLATE="$INSTALL_DIR/com.user.raycastmem.plist"
+readonly TARGET_WRAPPER="$INSTALL_DIR/rmm"
+readonly CLI_LINK_RECORD="$INSTALL_DIR/.cli-path"
+readonly LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
+readonly TARGET_PLIST="$LAUNCH_AGENTS_DIR/$(basename "$SOURCE_PLIST")"
+readonly DIRECT_SERVICE_LABEL="com.boozer.raycastmem"
+readonly BREW_SERVICE_LABEL="homebrew.mxcl.raycast-mem-monitor"
+readonly RMM_PATH_TOKEN="__RMM_PATH__"
+readonly DEFAULT_MEM_THRESHOLD_MB="420"
+readonly DEFAULT_START_INTERVAL="300"
+readonly NOTIFIER_APP_NAME="IBM Notifier.app"
+readonly NOTIFIER_PRIMARY_APP_ROOT="${RMM_NOTIFIER_PRIMARY_APP_ROOT:-/Applications}"
+readonly NOTIFIER_FALLBACK_APP_ROOT="${RMM_NOTIFIER_FALLBACK_APP_ROOT:-$HOME/Applications}"
+readonly NOTIFIER_LATEST_RELEASE_API="${RMM_NOTIFIER_LATEST_RELEASE_API:-https://api.github.com/repos/IBM/mac-ibm-notifications/releases/latest}"
+readonly NOTIFIER_LATEST_DOWNLOAD_URL="${RMM_NOTIFIER_LATEST_DOWNLOAD_URL:-https://github.com/IBM/mac-ibm-notifications/releases/latest/download/IBM.Notifier.zip}"
+readonly GITHUB_API_ACCEPT="Accept: application/vnd.github+json"
+readonly GITHUB_API_USER_AGENT="User-Agent: raycast-mem-monitor"
+
+log() {
+    printf '[rmm] %s\n' "$1"
+}
+
+fail() {
+    printf '[rmm] %s\n' "$1" >&2
+    exit 1
+}
+
+usage() {
+    cat <<EOF
+Usage:
+  rmm install
+  rmm install-notifier
+  rmm status
+  rmm uninstall
+  rmm check
+  rmm daemon
+  rmm dry-run
+  rmm -i
+  rmm -n
+  rmm -cm 500
+  rmm -ct 200
+  rmm -c -m 500 -t 200
+
+Homebrew workflow:
+  brew tap --custom-remote ManicEuphoria/raycast-mem-monitor https://github.com/ManicEuphoria/raycast_mem_monitor
+  brew install --HEAD maniceuphoria/raycast-mem-monitor/raycast-mem-monitor
+  brew services start raycast-mem-monitor
+
+Direct install workflow:
+  ./deploy.sh
+  rmm -i
+
+Options:
+  -i        Install or update the direct LaunchAgent version.
+  -n        Install IBM Notifier from the latest official GitHub release.
+  -c        Change configuration values.
+  -m VALUE  Set MEM_THRESHOLD_MB.
+  -t VALUE  Set START_INTERVAL in seconds.
+  -h        Show this message.
+EOF
+}
+
+is_positive_integer() {
+    [[ "${1:-}" =~ ^[1-9][0-9]*$ ]]
+}
+
+path_contains() {
+    local dir="$1"
+    case ":$PATH:" in
+        *":$dir:"*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+find_notifier_binary() {
+    local candidate
+    local candidates=(
+        "$NOTIFIER_PRIMARY_APP_ROOT/$NOTIFIER_APP_NAME/Contents/MacOS/IBM Notifier"
+        "$NOTIFIER_FALLBACK_APP_ROOT/$NOTIFIER_APP_NAME/Contents/MacOS/IBM Notifier"
+    )
+
+    for candidate in "${candidates[@]}"; do
+        if [ -x "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+choose_notifier_install_root() {
+    if [ -d "$NOTIFIER_PRIMARY_APP_ROOT" ] && [ -w "$NOTIFIER_PRIMARY_APP_ROOT" ]; then
+        printf '%s\n' "$NOTIFIER_PRIMARY_APP_ROOT"
+        return
+    fi
+
+    mkdir -p "$NOTIFIER_FALLBACK_APP_ROOT"
+    printf '%s\n' "$NOTIFIER_FALLBACK_APP_ROOT"
+}
+
+read_config_value() {
+    local key="$1"
+    local default_value="$2"
+    local value=""
+
+    if [ -f "$CONFIG_FILE" ]; then
+        value=$(awk -F= -v key="$key" '
+            /^[[:space:]]*#/ { next }
+            $1 ~ "^[[:space:]]*" key "[[:space:]]*$" {
+                value = $2
+                sub(/^[[:space:]]+/, "", value)
+                sub(/[[:space:]]+$/, "", value)
+                gsub(/^"/, "", value)
+                gsub(/"$/, "", value)
+                print value
+            }
+        ' "$CONFIG_FILE" | tail -n 1)
+    fi
+
+    if is_positive_integer "$value"; then
+        printf '%s\n' "$value"
+    else
+        printf '%s\n' "$default_value"
+    fi
+}
+
+write_config_file() {
+    local mem_threshold="$1"
+    local start_interval="$2"
+    local tmp_file
+
+    mkdir -p "$INSTALL_DIR"
+    tmp_file="$(mktemp -t raycast_mem_monitor.conf)"
+
+    cat <<EOF > "$tmp_file"
+# Managed by Raycast Memory Monitor.
+MEM_THRESHOLD_MB=$mem_threshold
+START_INTERVAL=$start_interval
+EOF
+
+    install -m 644 "$tmp_file" "$CONFIG_FILE"
+    rm -f "$tmp_file"
+}
+
+ensure_config_file() {
+    local mem_threshold
+    local start_interval
+
+    mem_threshold="$(read_config_value "MEM_THRESHOLD_MB" "$DEFAULT_MEM_THRESHOLD_MB")"
+    start_interval="$(read_config_value "START_INTERVAL" "$DEFAULT_START_INTERVAL")"
+    write_config_file "$mem_threshold" "$start_interval"
+}
+
+escape_sed_replacement() {
+    printf '%s' "$1" | sed 's/[&|\\]/\\&/g'
+}
+
+render_plist() {
+    local output_path="$1"
+    local escaped_rmm_path
+
+    escaped_rmm_path="$(escape_sed_replacement "$TARGET_WRAPPER")"
+    sed "s|$RMM_PATH_TOKEN|$escaped_rmm_path|g" "$SOURCE_PLIST" > "$output_path"
+    plutil -lint "$output_path" >/dev/null
+}
+
+make_temp_plist() {
+    mktemp -t raycast_mem_monitor
+}
+
+read_plist_label() {
+    local plist_path="$1"
+    /usr/libexec/PlistBuddy -c 'Print :Label' "$plist_path"
+}
+
+bootout_label_if_needed() {
+    local label="$1"
+    local domain="gui/$(id -u)"
+
+    launchctl bootout "$domain/$label" >/dev/null 2>&1 || true
+}
+
+install_file_if_needed() {
+    local source_path="$1"
+    local target_path="$2"
+    local mode="$3"
+
+    if [ "$source_path" = "$target_path" ]; then
+        return
+    fi
+
+    install -m "$mode" "$source_path" "$target_path"
+}
+
+find_cli_install_path() {
+    local dir
+    local preferred_dirs=(
+        "$HOME/.local/bin"
+        "$HOME/bin"
+        "/opt/homebrew/bin"
+        "/usr/local/bin"
+    )
+
+    for dir in "${preferred_dirs[@]}"; do
+        if ! path_contains "$dir"; then
+            continue
+        fi
+
+        if [ -d "$dir" ] && [ -w "$dir" ]; then
+            printf '%s/%s\n' "$dir" "$CLI_NAME"
+            return
+        fi
+    done
+
+    while IFS=: read -r dir; do
+        [ -n "$dir" ] || continue
+
+        if [ -d "$dir" ] && [ -w "$dir" ]; then
+            printf '%s/%s\n' "$dir" "$CLI_NAME"
+            return
+        fi
+    done <<< "$PATH"
+
+    mkdir -p "$HOME/.local/bin"
+    printf '%s/%s\n' "$HOME/.local/bin" "$CLI_NAME"
+}
+
+is_our_cli_path() {
+    local cli_path="$1"
+
+    [ -n "$cli_path" ] || return 1
+
+    if [ -L "$cli_path" ] && [ "$(readlink "$cli_path" || true)" = "$TARGET_WRAPPER" ]; then
+        return 0
+    fi
+
+    grep -q 'raycast_mem_monitor_cli' "$cli_path" 2>/dev/null
+}
+
+install_cli_command() {
+    local existing_cli=""
+    local cli_target_path=""
+
+    existing_cli="$(command -v "$CLI_NAME" 2>/dev/null || true)"
+
+    if [ -n "$existing_cli" ]; then
+        if is_our_cli_path "$existing_cli"; then
+            printf '%s\n' "$existing_cli" > "$CLI_LINK_RECORD"
+            log "CLI command already available at: $existing_cli"
+            return
+        fi
+
+        log "Skipped CLI install because '$CLI_NAME' already exists at: $existing_cli"
+        return
+    fi
+
+    cli_target_path="$(find_cli_install_path)"
+    mkdir -p "$(dirname "$cli_target_path")"
+    ln -sfn "$TARGET_WRAPPER" "$cli_target_path"
+    printf '%s\n' "$cli_target_path" > "$CLI_LINK_RECORD"
+    log "Installed CLI command to: $cli_target_path"
+
+    if ! path_contains "$(dirname "$cli_target_path")"; then
+        log "Add $(dirname "$cli_target_path") to PATH to run: $CLI_NAME"
+    fi
+}
+
+remove_cli_command() {
+    local cli_path=""
+
+    if [ -f "$CLI_LINK_RECORD" ]; then
+        cli_path="$(cat "$CLI_LINK_RECORD")"
+    fi
+
+    if [ -n "$cli_path" ] && [ -L "$cli_path" ] && [ "$(readlink "$cli_path" || true)" = "$TARGET_WRAPPER" ]; then
+        rm -f "$cli_path"
+        log "Removed CLI command: $cli_path"
+    fi
+
+    rm -f "$CLI_LINK_RECORD"
+}
+
+reload_direct_launch_agent() {
+    local label
+    local domain="gui/$(id -u)"
+
+    label="$(read_plist_label "$TARGET_PLIST")"
+    bootout_label_if_needed "$label"
+    launchctl bootstrap "$domain" "$TARGET_PLIST"
+    launchctl enable "$domain/$label"
+    launchctl kickstart -k "$domain/$label"
+}
+
+launchctl_label_loaded() {
+    local label="$1"
+    local domain="gui/$(id -u)"
+
+    launchctl print "$domain/$label" >/dev/null 2>&1
+}
+
+restart_active_services() {
+    local restarted=false
+    local domain="gui/$(id -u)"
+
+    if [ -f "$TARGET_PLIST" ] && launchctl_label_loaded "$DIRECT_SERVICE_LABEL"; then
+        launchctl kickstart -k "$domain/$DIRECT_SERVICE_LABEL" >/dev/null 2>&1 || true
+        log "Reloaded direct LaunchAgent: $DIRECT_SERVICE_LABEL"
+        restarted=true
+    fi
+
+    if launchctl_label_loaded "$BREW_SERVICE_LABEL"; then
+        launchctl kickstart -k "$domain/$BREW_SERVICE_LABEL" >/dev/null 2>&1 || true
+        log "Reloaded brew service: $BREW_SERVICE_LABEL"
+        restarted=true
+    fi
+
+    if [ "$restarted" = false ]; then
+        log "Config updated. No active service detected."
+    fi
+}
+
+install_or_update() {
+    local tmp_plist
+
+    [ -f "$SOURCE_SCRIPT" ] || fail "Missing source script: $SOURCE_SCRIPT"
+    [ -f "$SOURCE_PLIST" ] || fail "Missing source plist: $SOURCE_PLIST"
+    [ -f "$SOURCE_WRAPPER" ] || fail "Missing CLI script: $SOURCE_WRAPPER"
+    grep -q "$RMM_PATH_TOKEN" "$SOURCE_PLIST" || fail "Missing $RMM_PATH_TOKEN placeholder in $SOURCE_PLIST"
+
+    mkdir -p "$INSTALL_DIR" "$LAUNCH_AGENTS_DIR"
+    ensure_config_file
+    install_file_if_needed "$SOURCE_SCRIPT" "$TARGET_SCRIPT" 755
+    install_file_if_needed "$SOURCE_PLIST" "$TARGET_PLIST_TEMPLATE" 644
+    install_file_if_needed "$SOURCE_WRAPPER" "$TARGET_WRAPPER" 755
+    install_cli_command
+
+    tmp_plist="$(make_temp_plist)"
+    trap "rm -f '$tmp_plist'" EXIT
+    render_plist "$tmp_plist"
+    install -m 644 "$tmp_plist" "$TARGET_PLIST"
+    reload_direct_launch_agent
+
+    log "Installed monitor script to: $TARGET_SCRIPT"
+    log "Installed CLI script to: $TARGET_WRAPPER"
+    log "Installed LaunchAgent to: $TARGET_PLIST"
+    log "Loaded launchd label: $DIRECT_SERVICE_LABEL"
+}
+
+dry_run() {
+    local tmp_plist
+    local label
+
+    [ -f "$SOURCE_SCRIPT" ] || fail "Missing source script: $SOURCE_SCRIPT"
+    [ -f "$SOURCE_PLIST" ] || fail "Missing source plist: $SOURCE_PLIST"
+
+    tmp_plist="$(make_temp_plist)"
+    trap "rm -f '$tmp_plist'" EXIT
+    render_plist "$tmp_plist"
+    label="$(read_plist_label "$tmp_plist")"
+
+    log "Dry run passed"
+    log "Would install monitor script to: $TARGET_SCRIPT"
+    log "Would install LaunchAgent to: $TARGET_PLIST"
+    log "Resolved launchd label: $label"
+}
+
+status() {
+    local mem_threshold
+    local start_interval
+    local cli_path=""
+    local notifier_path=""
+
+    mem_threshold="$(read_config_value "MEM_THRESHOLD_MB" "$DEFAULT_MEM_THRESHOLD_MB")"
+    start_interval="$(read_config_value "START_INTERVAL" "$DEFAULT_START_INTERVAL")"
+    cli_path="$(command -v "$CLI_NAME" 2>/dev/null || true)"
+
+    log "Payload source: $SOURCE_DIR"
+    log "Config file: $CONFIG_FILE"
+    log "MEM_THRESHOLD_MB: $mem_threshold"
+    log "START_INTERVAL: $start_interval"
+    log "CLI command: ${cli_path:-not installed}"
+
+    notifier_path="$(find_notifier_binary || true)"
+    if [ -n "$notifier_path" ]; then
+        log "IBM Notifier: installed at $notifier_path"
+    else
+        log "IBM Notifier: not installed"
+    fi
+
+    if [ -f "$TARGET_PLIST" ]; then
+        log "Direct LaunchAgent plist: $TARGET_PLIST"
+        if launchctl_label_loaded "$DIRECT_SERVICE_LABEL"; then
+            log "Direct LaunchAgent state: loaded"
+        else
+            log "Direct LaunchAgent state: installed but not loaded"
+        fi
+    else
+        log "Direct LaunchAgent state: not installed"
+    fi
+
+    if launchctl_label_loaded "$BREW_SERVICE_LABEL"; then
+        log "Brew service state: loaded"
+    else
+        log "Brew service state: not loaded"
+    fi
+}
+
+uninstall() {
+    if [ -f "$TARGET_PLIST" ]; then
+        bootout_label_if_needed "$DIRECT_SERVICE_LABEL"
+        rm -f "$TARGET_PLIST"
+        log "Removed LaunchAgent: $TARGET_PLIST"
+    else
+        log "LaunchAgent not installed"
+    fi
+
+    remove_cli_command
+    rm -f "$TARGET_SCRIPT" "$TARGET_PLIST_TEMPLATE" "$TARGET_WRAPPER" "$CONFIG_FILE"
+
+    if [ -d "$INSTALL_DIR" ] && [ -z "$(ls -A "$INSTALL_DIR")" ]; then
+        rmdir "$INSTALL_DIR"
+    fi
+
+    if launchctl_label_loaded "$BREW_SERVICE_LABEL"; then
+        log "Brew service is still loaded. Stop it with: brew services stop raycast-mem-monitor"
+    fi
+}
+
+update_configuration() {
+    local new_mem_threshold="${1:-}"
+    local new_start_interval="${2:-}"
+    local mem_threshold
+    local start_interval
+
+    ensure_config_file
+    mem_threshold="$(read_config_value "MEM_THRESHOLD_MB" "$DEFAULT_MEM_THRESHOLD_MB")"
+    start_interval="$(read_config_value "START_INTERVAL" "$DEFAULT_START_INTERVAL")"
+
+    if [ -n "$new_mem_threshold" ]; then
+        is_positive_integer "$new_mem_threshold" || fail "MEM_THRESHOLD_MB must be a positive integer."
+        mem_threshold="$new_mem_threshold"
+    fi
+
+    if [ -n "$new_start_interval" ]; then
+        is_positive_integer "$new_start_interval" || fail "START_INTERVAL must be a positive integer."
+        start_interval="$new_start_interval"
+    fi
+
+    write_config_file "$mem_threshold" "$start_interval"
+    log "Set MEM_THRESHOLD_MB=$mem_threshold"
+    log "Set START_INTERVAL=$start_interval"
+    restart_active_services
+}
+
+install_notifier() {
+    local tmp_dir
+    local release_json
+    local download_url
+    local expected_sha
+    local version_name
+    local zip_path
+    local extracted_dir
+    local extracted_app
+    local install_root
+    local target_app
+    local actual_sha
+    local notifier_path=""
+
+    notifier_path="$(find_notifier_binary || true)"
+    if [ -n "$notifier_path" ]; then
+        log "IBM Notifier already installed at: $notifier_path"
+        return 0
+    fi
+
+    tmp_dir="$(mktemp -d -t ibm_notifier_install)"
+    trap "rm -rf '$tmp_dir'" RETURN
+
+    log "Fetching latest IBM Notifier release metadata"
+    release_json="$(
+        curl -fsSL \
+            -H "$GITHUB_API_ACCEPT" \
+            -H "$GITHUB_API_USER_AGENT" \
+            "$NOTIFIER_LATEST_RELEASE_API"
+    )" || true
+
+    if [ -n "$release_json" ]; then
+        download_url="$(
+            printf '%s' "$release_json" | /usr/bin/ruby -rjson -e '
+                data = JSON.parse(STDIN.read)
+                asset = data.fetch("assets", []).find { |item| item["name"] == "IBM.Notifier.zip" } ||
+                        data.fetch("assets", []).find { |item| item["name"].to_s.end_with?(".zip") }
+                abort("missing asset") unless asset
+                print asset.fetch("browser_download_url")
+            '
+        )" || fail "Unable to locate IBM Notifier zip asset in the latest release."
+
+        expected_sha="$(
+            printf '%s' "$release_json" | /usr/bin/ruby -rjson -e '
+                data = JSON.parse(STDIN.read)
+                asset = data.fetch("assets", []).find { |item| item["name"] == "IBM.Notifier.zip" } ||
+                        data.fetch("assets", []).find { |item| item["name"].to_s.end_with?(".zip") }
+                digest = asset && asset["digest"].to_s
+                digest = digest.sub(/\Asha256:/, "")
+                print digest
+            '
+        )"
+
+        version_name="$(
+            printf '%s' "$release_json" | /usr/bin/ruby -rjson -e '
+                data = JSON.parse(STDIN.read)
+                print(data["name"].to_s.empty? ? data.fetch("tag_name") : data["name"])
+            '
+        )"
+    else
+        download_url="$NOTIFIER_LATEST_DOWNLOAD_URL"
+        expected_sha=""
+        version_name="latest official release"
+        log "GitHub API metadata unavailable, falling back to releases/latest/download"
+    fi
+
+    zip_path="$tmp_dir/IBM.Notifier.zip"
+    extracted_dir="$tmp_dir/extracted"
+
+    log "Downloading IBM Notifier: $version_name"
+    curl -fsSL "$download_url" -o "$zip_path" || fail "Unable to download IBM Notifier from $download_url"
+
+    if [ -n "$expected_sha" ]; then
+        actual_sha="$(shasum -a 256 "$zip_path" | awk '{print $1}')"
+        [ "$actual_sha" = "$expected_sha" ] || fail "IBM Notifier checksum verification failed."
+    fi
+
+    mkdir -p "$extracted_dir"
+    ditto -x -k "$zip_path" "$extracted_dir"
+
+    extracted_app="$extracted_dir/$NOTIFIER_APP_NAME"
+    [ -d "$extracted_app" ] || fail "Downloaded archive does not contain $NOTIFIER_APP_NAME."
+
+    install_root="$(choose_notifier_install_root)"
+    target_app="$install_root/$NOTIFIER_APP_NAME"
+
+    rm -rf "$target_app"
+    ditto "$extracted_app" "$target_app"
+
+    notifier_path="$(find_notifier_binary || true)"
+    if [ -n "$notifier_path" ]; then
+        log "Installed IBM Notifier to: $target_app"
+    else
+        fail "IBM Notifier install completed but executable was not found."
+    fi
+}
+
+run_monitor() {
+    local action="$1"
+
+    exec env RMM_CONFIG_FILE="$CONFIG_FILE" "$SOURCE_SCRIPT" "$action"
+}
+
+run_subcommand() {
+    case "$1" in
+        install)
+            install_or_update
+            ;;
+        install-notifier|notifier-install)
+            install_notifier
+            ;;
+        status)
+            status
+            ;;
+        uninstall)
+            uninstall
+            ;;
+        dry-run)
+            dry_run
+            ;;
+        check)
+            run_monitor check
+            ;;
+        daemon)
+            run_monitor daemon
+            ;;
+        help)
+            usage
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+parse_short_options() {
+    local config_requested=false
+    local install_requested=false
+    local notifier_requested=false
+    local mem_threshold=""
+    local start_interval=""
+    local opt
+
+    OPTIND=1
+    while getopts ":incm:t:h" opt; do
+        case "$opt" in
+            i)
+                install_requested=true
+                ;;
+            n)
+                notifier_requested=true
+                ;;
+            c)
+                config_requested=true
+                ;;
+            m)
+                mem_threshold="$OPTARG"
+                ;;
+            t)
+                start_interval="$OPTARG"
+                ;;
+            h)
+                usage
+                return 0
+                ;;
+            :)
+                fail "Option -$OPTARG requires a value."
+                ;;
+            \?)
+                fail "Unknown option: -$OPTARG"
+                ;;
+        esac
+    done
+
+    shift $((OPTIND - 1))
+
+    if [ "$#" -gt 0 ]; then
+        fail "Unexpected arguments: $*"
+    fi
+
+    if [ "$config_requested" = true ]; then
+        if [ -z "$mem_threshold" ] && [ -z "$start_interval" ]; then
+            fail "Use -c with -m VALUE and/or -t VALUE."
+        fi
+        update_configuration "$mem_threshold" "$start_interval"
+        return 0
+    fi
+
+    if [ "$notifier_requested" = true ]; then
+        if [ "$install_requested" = true ]; then
+            fail "Use -n by itself."
+        fi
+        install_notifier
+        return 0
+    fi
+
+    if [ -n "$mem_threshold" ] || [ -n "$start_interval" ]; then
+        fail "Use -c together with -m/-t."
+    fi
+
+    if [ "$install_requested" = true ]; then
+        install_or_update
+        return 0
+    fi
+
+    usage
+    return 1
+}
+
+main() {
+    if [ "$#" -eq 0 ]; then
+        usage
+        exit 0
+    fi
+
+    if run_subcommand "$1"; then
+        exit 0
+    fi
+
+    parse_short_options "$@"
+}
+
+main "$@"
