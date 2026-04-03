@@ -31,7 +31,7 @@ Configuration is stored in:
 
 ```bash
 brew tap --custom-remote ManicEuphoria/raycast-mem-monitor https://github.com/ManicEuphoria/raycast_mem_monitor
-brew install --HEAD maniceuphoria/raycast-mem-monitor/raycast-mem-monitor
+brew install maniceuphoria/raycast-mem-monitor/raycast-mem-monitor
 brew services start raycast-mem-monitor
 ```
 

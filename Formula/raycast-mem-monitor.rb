@@ -1,7 +1,10 @@
 class RaycastMemMonitor < Formula
   desc "Monitor Raycast memory usage and restart it when it exceeds a threshold"
   homepage "https://github.com/ManicEuphoria/raycast_mem_monitor"
-  head "https://github.com/ManicEuphoria/raycast_mem_monitor.git", branch: "main"
+  url "https://github.com/ManicEuphoria/raycast_mem_monitor/archive/refs/tags/v0.4.0.tar.gz"
+  sha256 "5c944be7e781d616de1f28983e663c1849eedf661e311ae4ded1c10013e0bd83"
+  version "0.4.0"
+  head "https://github.com/ManicEuphoria/raycast_mem_monitor.git", branch: "master"
   license "MIT"
 
   def install
