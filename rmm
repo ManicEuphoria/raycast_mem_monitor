@@ -430,6 +430,9 @@ status() {
     local start_interval
     local cli_path=""
     local notifier_path=""
+    local direct_installed=false
+    local direct_loaded=false
+    local brew_loaded=false
 
     mem_threshold="$(read_config_value "MEM_THRESHOLD_MB" "$DEFAULT_MEM_THRESHOLD_MB")"
     start_interval="$(read_config_value "START_INTERVAL" "$DEFAULT_START_INTERVAL")"
@@ -449,20 +452,37 @@ status() {
     fi
 
     if [ -f "$TARGET_PLIST" ]; then
+        direct_installed=true
         log "Direct LaunchAgent plist: $TARGET_PLIST"
         if launchctl_label_loaded "$DIRECT_SERVICE_LABEL"; then
+            direct_loaded=true
             log "Direct LaunchAgent state: loaded"
         else
             log "Direct LaunchAgent state: installed but not loaded"
         fi
+    elif launchctl_label_loaded "$BREW_SERVICE_LABEL"; then
+        log "Direct LaunchAgent state: not installed (normal when using Homebrew service)"
     else
         log "Direct LaunchAgent state: not installed"
     fi
 
     if launchctl_label_loaded "$BREW_SERVICE_LABEL"; then
+        brew_loaded=true
         log "Brew service state: loaded"
     else
         log "Brew service state: not loaded"
+    fi
+
+    if [ "$direct_loaded" = true ] && [ "$brew_loaded" = true ]; then
+        log "Active runtime: both direct LaunchAgent and Homebrew service are loaded"
+    elif [ "$brew_loaded" = true ]; then
+        log "Active runtime: Homebrew service"
+    elif [ "$direct_loaded" = true ]; then
+        log "Active runtime: direct LaunchAgent"
+    elif [ "$direct_installed" = true ]; then
+        log "Active runtime: direct LaunchAgent is installed but not running"
+    else
+        log "Active runtime: not running"
     fi
 }
 
