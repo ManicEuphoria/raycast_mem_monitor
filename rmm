@@ -67,6 +67,7 @@ readonly NOTIFIER_PRIMARY_APP_ROOT="${RMM_NOTIFIER_PRIMARY_APP_ROOT:-/Applicatio
 readonly NOTIFIER_FALLBACK_APP_ROOT="${RMM_NOTIFIER_FALLBACK_APP_ROOT:-$HOME/Applications}"
 readonly NOTIFIER_LATEST_RELEASE_API="${RMM_NOTIFIER_LATEST_RELEASE_API:-https://api.github.com/repos/IBM/mac-ibm-notifications/releases/latest}"
 readonly NOTIFIER_LATEST_DOWNLOAD_URL="${RMM_NOTIFIER_LATEST_DOWNLOAD_URL:-https://github.com/IBM/mac-ibm-notifications/releases/latest/download/IBM.Notifier.zip}"
+readonly SKIP_SERVICE_RESTART="${RMM_SKIP_SERVICE_RESTART:-false}"
 readonly GITHUB_API_ACCEPT="Accept: application/vnd.github+json"
 readonly GITHUB_API_USER_AGENT="User-Agent: raycast-mem-monitor"
 
@@ -356,6 +357,11 @@ launchctl_label_loaded() {
 restart_active_services() {
     local restarted=false
     local domain="gui/$(id -u)"
+
+    if [ "$SKIP_SERVICE_RESTART" = true ]; then
+        log "Config updated. Service restart skipped."
+        return
+    fi
 
     if [ -f "$TARGET_PLIST" ] && launchctl_label_loaded "$DIRECT_SERVICE_LABEL"; then
         launchctl kickstart -k "$domain/$DIRECT_SERVICE_LABEL" >/dev/null 2>&1 || true

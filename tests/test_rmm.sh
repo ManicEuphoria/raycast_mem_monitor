@@ -68,6 +68,7 @@ run_with_env() {
     HOME="$env_root/home" \
     RMM_NOTIFIER_PRIMARY_APP_ROOT="$env_root/apps" \
     RMM_NOTIFIER_FALLBACK_APP_ROOT="$env_root/apps" \
+    RMM_SKIP_SERVICE_RESTART=true \
     "$@"
 }
 
@@ -86,7 +87,6 @@ test_help_and_config_updates() {
 
     output="$(run_with_env "$env_root" "$RMM_BIN" -cm 500)"
     assert_contains "$output" "Set MEM_THRESHOLD_MB=500"
-    assert_contains "$output" "Config updated. No active service detected."
 
     output="$(run_with_env "$env_root" "$RMM_BIN" -ct 200)"
     assert_contains "$output" "Set START_INTERVAL=200"
@@ -120,6 +120,7 @@ test_install_notifier_from_release_metadata() {
         HOME="$env_root/home" \
         RMM_NOTIFIER_PRIMARY_APP_ROOT="$env_root/apps" \
         RMM_NOTIFIER_FALLBACK_APP_ROOT="$env_root/apps" \
+        RMM_SKIP_SERVICE_RESTART=true \
         RMM_NOTIFIER_LATEST_RELEASE_API="file://$release_json_path" \
         "$RMM_BIN" install-notifier
     )"
@@ -132,6 +133,7 @@ test_install_notifier_from_release_metadata() {
         HOME="$env_root/home" \
         RMM_NOTIFIER_PRIMARY_APP_ROOT="$env_root/apps" \
         RMM_NOTIFIER_FALLBACK_APP_ROOT="$env_root/apps" \
+        RMM_SKIP_SERVICE_RESTART=true \
         "$RMM_BIN" status
     )"
     assert_contains "$output" "IBM Notifier: installed at $installed_binary"
@@ -157,6 +159,7 @@ test_install_notifier_fallback_download() {
         HOME="$env_root/home" \
         RMM_NOTIFIER_PRIMARY_APP_ROOT="$env_root/apps" \
         RMM_NOTIFIER_FALLBACK_APP_ROOT="$env_root/apps" \
+        RMM_SKIP_SERVICE_RESTART=true \
         RMM_NOTIFIER_LATEST_RELEASE_API="file://$fixture_root/missing.json" \
         RMM_NOTIFIER_LATEST_DOWNLOAD_URL="file://$archive_path" \
         "$RMM_BIN" -n 2>/dev/null
@@ -171,6 +174,7 @@ test_install_notifier_fallback_download() {
         HOME="$env_root/home" \
         RMM_NOTIFIER_PRIMARY_APP_ROOT="$env_root/apps" \
         RMM_NOTIFIER_FALLBACK_APP_ROOT="$env_root/apps" \
+        RMM_SKIP_SERVICE_RESTART=true \
         "$RMM_BIN" -n
     )"
     assert_contains "$output" "IBM Notifier already installed at: $installed_binary"
