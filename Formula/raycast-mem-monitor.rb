@@ -9,6 +9,7 @@ class RaycastMemMonitor < Formula
 
   def install
     libexec.install "raycast_mem_monitor.sh", "com.user.raycastmem.plist", "rmm"
+    chmod 0755, libexec/"raycast_mem_monitor.sh"
     bin.install_symlink libexec/"rmm"
   end
 
@@ -55,6 +56,8 @@ class RaycastMemMonitor < Formula
     ENV["RMM_NOTIFIER_LATEST_RELEASE_API"] = "file://#{release_json}"
 
     assert_match "install-notifier", shell_output("#{bin}/rmm help")
+    shell_output("#{bin}/rmm check")
+    assert_predicate testpath/"raycast_mem_monitor.log", :exist?
     output = shell_output("#{bin}/rmm install-notifier")
     assert_match "Installed IBM Notifier to:", output
     assert_predicate apps_dir/"IBM Notifier.app/Contents/MacOS/IBM Notifier", :exist?

@@ -633,7 +633,7 @@ install_notifier() {
 run_monitor() {
     local action="$1"
 
-    exec env RMM_CONFIG_FILE="$CONFIG_FILE" "$SOURCE_SCRIPT" "$action"
+    exec env RMM_CONFIG_FILE="$CONFIG_FILE" bash "$SOURCE_SCRIPT" "$action"
 }
 
 run_subcommand() {
