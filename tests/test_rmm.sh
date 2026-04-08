@@ -25,6 +25,15 @@ assert_file_contains() {
     grep -q "$needle" "$path" || fail "expected $path to contain: $needle"
 }
 
+assert_line_count_at_most() {
+    local path="$1"
+    local expected_max="$2"
+    local actual_count
+
+    actual_count="$(wc -l < "$path" | tr -d '[:space:]')"
+    [ "$actual_count" -le "$expected_max" ] || fail "expected $path to have at most $expected_max lines, got $actual_count"
+}
+
 make_notifier_fixture() {
     local fixture_root="$1"
     local archive_path="$2"
@@ -95,6 +104,38 @@ test_help_and_config_updates() {
     [ -f "$config_path" ] || fail "missing config file after update"
     assert_file_contains "$config_path" "MEM_THRESHOLD_MB=500"
     assert_file_contains "$config_path" "START_INTERVAL=200"
+}
+
+test_log_truncation() {
+    local env_root
+    local log_path
+    local output
+
+    env_root="$(mktemp -d /tmp/rmm-test-log.XXXXXX)"
+    trap "rm -rf '$env_root'" RETURN
+
+    mkdir -p "$env_root/home"
+    log_path="$env_root/home/test.log"
+
+    cat <<'EOF' > "$log_path"
+line 1
+line 2
+line 3
+line 4
+line 5
+line 6
+EOF
+
+    output="$(
+        HOME="$env_root/home" \
+        RMM_LOG_FILE="$log_path" \
+        RMM_LOG_MAX_BYTES=20 \
+        RMM_LOG_KEEP_LINES=2 \
+        bash "$REPO_DIR/raycast_mem_monitor.sh" check
+    )"
+    [ -z "$output" ] || fail "expected no stdout from direct check"
+
+    assert_line_count_at_most "$log_path" 2
 }
 
 test_install_notifier_from_release_metadata() {
@@ -183,6 +224,7 @@ test_install_notifier_fallback_download() {
 main() {
     bash -n "$REPO_DIR/rmm" "$REPO_DIR/raycast_mem_monitor.sh" "$REPO_DIR/deploy.sh"
     test_help_and_config_updates
+    test_log_truncation
     test_install_notifier_from_release_metadata
     test_install_notifier_fallback_download
     printf 'tests passed\n'

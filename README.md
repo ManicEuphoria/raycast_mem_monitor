@@ -193,6 +193,7 @@ The monitor writes runtime logs to:
 ```
 
 These logs include current memory readings, restart actions, and other monitor activity.
+To avoid keeping stale logs forever, the file is automatically truncated when it grows beyond `256 KB`, keeping the most recent `200` lines.
 
 ## Testing
 

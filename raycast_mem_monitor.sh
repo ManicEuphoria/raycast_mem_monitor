@@ -13,8 +13,12 @@ readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly APP_NAME="Raycast"
 readonly DEFAULT_MEM_THRESHOLD_MB=420
 readonly DEFAULT_START_INTERVAL=300
+readonly DEFAULT_LOG_MAX_BYTES=262144
+readonly DEFAULT_LOG_KEEP_LINES=200
 readonly CONFIG_FILE="${RMM_CONFIG_FILE:-$SCRIPT_DIR/raycast_mem_monitor.conf}"
-readonly LOG_FILE="$HOME/raycast_mem_monitor.log"
+readonly LOG_FILE="${RMM_LOG_FILE:-$HOME/raycast_mem_monitor.log}"
+readonly LOG_MAX_BYTES="${RMM_LOG_MAX_BYTES:-$DEFAULT_LOG_MAX_BYTES}"
+readonly LOG_KEEP_LINES="${RMM_LOG_KEEP_LINES:-$DEFAULT_LOG_KEEP_LINES}"
 
 # IBM Notifier configuration
 readonly NA_APP_NAME="IBM Notifier.app"
@@ -70,6 +74,31 @@ is_positive_integer() {
 log_info() {
     local msg="$1"
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $msg" >> "$LOG_FILE"
+    trim_log_file_if_needed
+}
+
+trim_log_file_if_needed() {
+    local max_bytes="$LOG_MAX_BYTES"
+    local keep_lines="$LOG_KEEP_LINES"
+    local file_size
+    local tmp_file
+
+    [ -f "$LOG_FILE" ] || return
+
+    if ! is_positive_integer "$max_bytes"; then
+        max_bytes="$DEFAULT_LOG_MAX_BYTES"
+    fi
+
+    if ! is_positive_integer "$keep_lines"; then
+        keep_lines="$DEFAULT_LOG_KEEP_LINES"
+    fi
+
+    file_size="$(wc -c < "$LOG_FILE" | tr -d '[:space:]')"
+    [ "$file_size" -le "$max_bytes" ] && return
+
+    tmp_file="$(mktemp -t raycast_mem_monitor.log)"
+    tail -n "$keep_lines" "$LOG_FILE" > "$tmp_file" || true
+    mv "$tmp_file" "$LOG_FILE"
 }
 
 read_config_value() {
